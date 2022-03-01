@@ -1,49 +1,17 @@
-import Link from 'next/link'
+import { Grid, Box } from "@chakra-ui/react";
 import dbConnect from '../lib/dbConnect'
-import Pet from '../models/Pet'
+import Movement from '../models/Movement'
+import MovementCard from '../components/UI/MovementCard/MovementCard'
 
-const Index = ({ pets }) => (
+const Index = ({ movements }) => (
   <>
-    {/* Create a card for each pet */}
-    {pets.map((pet) => (
-      <div key={pet._id}>
-        <div className="card">
-          <img src={pet.image_url} />
-          <h5 className="pet-name">{pet.name}</h5>
-          <div className="main-content">
-            <p className="pet-name">{pet.name}</p>
-            <p className="owner">Owner: {pet.owner_name}</p>
-
-            {/* Extra Pet Info: Likes and Dislikes */}
-            <div className="likes info">
-              <p className="label">Likes</p>
-              <ul>
-                {pet.likes.map((data, index) => (
-                  <li key={index}>{data} </li>
-                ))}
-              </ul>
-            </div>
-            <div className="dislikes info">
-              <p className="label">Dislikes</p>
-              <ul>
-                {pet.dislikes.map((data, index) => (
-                  <li key={index}>{data} </li>
-                ))}
-              </ul>
-            </div>
-
-            <div className="btn-container">
-              <Link href="/[id]/edit" as={`/${pet._id}/edit`}>
-                <button className="btn edit">Edit</button>
-              </Link>
-              <Link href="/[id]" as={`/${pet._id}`}>
-                <button className="btn view">View</button>
-              </Link>
-            </div>
-          </div>
-        </div>
-      </div>
-    ))}
+    <Box margin="auto" padding={{base: "4" , sm: "8"}} maxWidth={{base: "100%", xl: "6xl"}} width="100%">
+      <Grid templateColumns={{base:"repeat(1, 1fr)", md:"repeat(2, 1fr)", xl:"repeat(3, 1fr)"}} gap={6}>
+        {movements.map((movement) => (
+          <MovementCard key={movement._id} movement={movement} />
+        ))}
+      </Grid>
+    </Box>
   </>
 )
 
@@ -51,15 +19,54 @@ const Index = ({ pets }) => (
 export async function getServerSideProps() {
   await dbConnect()
 
-  /* find all the data in our database */
-  const result = await Pet.find({})
-  const pets = result.map((doc) => {
-    const pet = doc.toObject()
-    pet._id = pet._id.toString()
-    return pet
-  })
+  const result = await Movement.aggregate([
+    {
+      $group:{ 
+        _id: '$coin',
+        amount:{$sum: "$amount"}, 
+        total: {$sum: "$total"},
+      }
+    },
+    {
+        $lookup:{
+          from: "coins",
+          localField: "_id",
+          foreignField: "_id",
+          as: "coin"
+        }
+    },
+    {
+      $unwind: '$coin'
+    },
+    {
+      $project: {
+        amount: "$amount",
+        total: "$total",
+        name: "$coin.name",
+        symbol: "$coin.symbol",
+        address: "$coin.address",
+        icon_url: "$coin.icon_url",
+      }
+    }
+  ]);
 
-  return { props: { pets: pets } }
+  const movements = await Promise.all(
+    result.map(async(doc) => {
+      let movement = doc;
+      
+      const psResponse = await fetch(`https://api.pancakeswap.info/api/v2/tokens/${movement.address}`)
+        .then(res => res.text())
+        .then(data => {
+          return JSON.parse(data).data;
+        });
+
+      movement._id = movement._id.toString()
+      movement.actualValue = psResponse.price;
+      return movement;
+    })
+  )
+
+  return { props: { movements: movements }, }
 }
 
 export default Index
